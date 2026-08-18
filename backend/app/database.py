@@ -36,7 +36,7 @@ class AuditEvent(Base):
 
 
 def _engine():
-    url = get_settings().database_url
+    url = get_settings().resolved_database_url
     options = {"check_same_thread": False} if url.startswith("sqlite") else {}
     return create_engine(url, pool_pre_ping=True, connect_args=options)
 

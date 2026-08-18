@@ -1,0 +1,162 @@
+# LTT Predictive Customer Churn Dashboard
+
+نظام دعم قرار تنبؤي عربي أولًا لفرق الإدارة وCustomer Experience وMarketing وCustomer Care وNetwork Operations وBI. يحدد العملاء الأكثر عرضة للمغادرة، يشرح أسباب الخطر، يحسب الإيراد المعرض، ويربط كل حالة ذات أولوية بإجراء Retention قابل للتنفيذ.
+
+> **تنبيه:** كل البيانات الحالية اصطناعية وتجريبية. لا تمثل عملاء LTT أو أداءها أو إيراداتها الحقيقية.
+
+## ما الذي يعمل؟
+
+- 12,000 سجل اتصالات اصطناعي قابل لإعادة التوليد بنفس seed.
+- مقارنة Logistic Regression وRandom Forest وXGBoost.
+- اختيار النموذج باستخدام ROC-AUC وRecall وPrecision وF1، وليس Accuracy فقط.
+- تصحيح احتمالات population بعد معالجة عدم توازن الفئات بـclass weights.
+- SHAP عالمي وسببـيات مفهومة على مستوى العميل.
+- Churn Risk Score من 0 إلى 100، مع Low/Medium/High/Critical.
+- توقع 30/60/90 يومًا، Revenue at Risk، وRetention Priority Score.
+- سبع شاشات: Executive Overview، Risk Analysis، Drivers، Customer 360، Action Center، Geography، Model Performance.
+- فلاتر مترابطة، drill-down، بحث، sorting، tooltips، وتصدير CSV.
+- FastAPI/OpenAPI، PostgreSQL، demo RBAC، إخفاء Customer IDs، وتسجيل Audit.
+- Docker Compose للواجهة والـAPI وقاعدة البيانات.
+
+## التشغيل السريع عبر Docker
+
+1. انسخ `.env.example` إلى `.env` وضع كلمة مرور محلية قوية.
+2. شغّل:
+
+```powershell
+docker compose up --build
+```
+
+3. افتح [http://localhost:8080](http://localhost:8080).
+
+أول تشغيل على volumes فارغة يدرّب النماذج ويولد البيانات داخل حاوية الـbackend، لذلك قد يستغرق قرابة دقيقة حسب الجهاز. Swagger متاح عبر [http://localhost:8080/api/docs](http://localhost:8080/api/docs) عند المرور عبر Nginx. لإعادة التدريب عمدًا، احذف فقط volumes التجريبية `prediction_data` و`model_artifacts` بعد التأكد من عدم وجود بيانات مطلوبة فيها.
+
+## التشغيل المحلي للمطور
+
+يتطلب Python 3.11 أو 3.12 وNode.js 24+.
+
+### Backend
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".\backend[dev]"
+Set-Location .\backend
+..\.venv\Scripts\python.exe scripts\bootstrap_data.py --records 12000
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+### Frontend
+
+في نافذة ثانية:
+
+```powershell
+Set-Location .\frontend
+npm ci
+npm run dev
+```
+
+افتح [http://localhost:5173](http://localhost:5173). يمرر Vite طلبات `/api` إلى FastAPI على المنفذ `8000`.
+
+## أوامر الجودة
+
+| المسار | الأمر | الغرض |
+|---|---|---|
+| Backend | `..\.venv\Scripts\python.exe -m pytest` | اختبارات scoring والبيانات والنمذجة والـAPI |
+| Backend | `..\.venv\Scripts\python.exe -m ruff check app tests scripts` | Lint |
+| Frontend | `npm test` | اختبارات Vitest وRTL semantics |
+| Frontend | `npm run lint` | ESLint |
+| Frontend | `npm run build` | TypeScript + production bundle |
+
+## المعمارية
+
+```mermaid
+flowchart LR
+  A["Synthetic generator\n12,000 customers"] --> B["ML pipeline\nLR / RF / XGBoost"]
+  B --> C["Prediction snapshot\nCSV + model metadata"]
+  C --> D["FastAPI analytics read model"]
+  E["PostgreSQL\nretention state + audit"] <--> D
+  D --> F["React RTL dashboard\n7 decision views"]
+  F --> G["Human retention action"]
+  G --> E
+```
+
+قرار الفصل بين التحليلات والحالة التشغيلية موثق في [ADR-001](docs/decisions/0001-architecture.md).
+
+## عقود الـAPI الرئيسية
+
+| Method | Endpoint | الغرض |
+|---|---|---|
+| GET | `/api/health` | صحة الخدمة ونوع البيانات وإصدار النموذج |
+| GET | `/api/v1/overview` | KPIs التنفيذية |
+| GET | `/api/v1/risk-analysis` | التوزيع والشرائح والـheatmap والاتجاه |
+| GET | `/api/v1/drivers` | SHAP وتحليل أثر الإشارات |
+| GET | `/api/v1/customers` | جدول مخاطر paginated ومفلتر |
+| GET | `/api/v1/customers/{customerId}` | Customer 360 |
+| GET | `/api/v1/customers/export` | CSV مفلتر للأدوار المخولة |
+| GET | `/api/v1/retention` | قائمة High/Critical مرتبة |
+| PATCH | `/api/v1/retention/{customerId}` | تحديث الحملة والنتيجة مع Audit |
+| GET | `/api/v1/geography` | المقاييس الإقليمية ونقاط الخريطة |
+| GET | `/api/v1/model-performance` | المقارنة والمنحنيات وConfusion Matrix |
+
+كل أخطاء الحدود تتبع الشكل:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request parameters",
+    "details": []
+  }
+}
+```
+
+## الأدوار والأمان
+
+أرسل `X-User-Role` بقيمة `executive` أو `analyst` أو `retention` أو `operations` أو `admin`.
+
+- `executive` و`operations`: عرض IDs مخفية.
+- `analyst`: IDs كاملة وتصدير.
+- `retention`: IDs كاملة وتصدير وتحديث حالات الحملات.
+- `admin`: صلاحيات العرض والتشغيل الكاملة في النسخة التجريبية.
+
+هذا header هو **محاكاة RBAC فقط**. الإنتاج يتطلب OIDC/SAML وهوية مستخدم موثوقة وسياسات authorization على الخادم. لا تعتمد على اختيار الدور من الواجهة كحد أمني.
+
+لا توجد بيانات شخصية في المشروع. الاستعلامات التشغيلية parameterized عبر SQLAlchemy، التصدير يستخدم allowlist، والمدخلات مقيدة عبر Pydantic/FastAPI. Nginx والـAPI يضيفان security headers، والـbackend يعمل كمستخدم غير root داخل الحاوية.
+
+## تعريفات القرار
+
+- **Predicted Churn Rate:** متوسط احتمال 30 يومًا ضمن المجتمع المفلتر.
+- **Revenue at Risk:** `monthly_revenue × churn_probability_30d`.
+- **Retention Priority Score:** `churn probability × monthly revenue × estimated retention probability`.
+- **High Risk:** 60–79.
+- **Critical Risk:** 80–100.
+- **Customers Saved / Revenue Protected:** نتائج احتفاظ محاكاة ومعلّمة كذلك.
+
+## هيكل المشروع
+
+```text
+backend/
+  app/                 FastAPI, scoring, analytics, persistence
+  scripts/             synthetic generation and training entrypoint
+  tests/               unit and API integration tests
+frontend/
+  src/components/      shared UI and charts
+  src/pages/           seven decision-support views
+  src/hooks/           API loading state
+docs/
+  decisions/           architecture decisions
+  MODEL_CARD.md        model purpose, metrics, limitations
+  DATA_DICTIONARY.md   fields and grain
+docker-compose.yml     PostgreSQL + API + Nginx frontend
+```
+
+## قيود مهمة قبل الإنتاج
+
+- لا يوجد connector أو ingest لبيانات LTT الحقيقية.
+- لا توجد مصادقة مؤسسية فعلية.
+- 60/90 يومًا سيناريوهات تراكمية وليست نماذج survival مستقلة.
+- اتجاه 12 شهرًا ونتائج الحملات السابقة محاكاة وليست تاريخًا فعليًا.
+- خريطة ليبيا تقريبية وليست حدود GIS رسمية ولا مواقع عملاء.
+- يجب اعتماد تعريف Churn، نافذة label، تكلفة False Negative، سعة فرق التدخل، ومعايير fairness/calibration قبل أي قرار تشغيلي.
+
+راجع [Model Card](docs/MODEL_CARD.md) و[Data Dictionary](docs/DATA_DICTIONARY.md) قبل استخدام أي مخرجات.

@@ -17,6 +17,7 @@ Read this before changing anything.
 - `frontend/` — React 19 + TS + Vite + Recharts. Pages in `src/pages/`, shared UI in `src/components/`, all styling in `src/styles.css` (design tokens at the top).
 - Deployment: `docker-compose.yml` (db + backend + frontend); the backend entrypoint generates deterministic artifacts when the model/data volumes are empty.
 - Docs: `docs/MODEL_CARD.md`, `docs/DATA_DICTIONARY.md`, `docs/decisions/` (ADRs). Update them when model behavior or data contracts change.
+- Design reference (user-designated): https://github.com/google-labs-code/design.md — vendor the verbatim `design.md` into the repo root when network access allows, and audit UI changes against it. Until then, `styles.css` encodes the working discipline: 4px structural spacing grid, a nine-step type scale (10–24px, no fractional sizes), radius scale 14/12/8, ≥40px interactive targets, visible focus, `prefers-reduced-motion` honored.
 
 ## Commands
 

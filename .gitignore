@@ -13,5 +13,6 @@ backend/data/*.csv
 backend/data/*.parquet
 backend/artifacts/*.joblib
 backend/artifacts/*.json
+backend/*.egg-info/
 coverage/
 .DS_Store

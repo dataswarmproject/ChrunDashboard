@@ -140,16 +140,16 @@ def generate_synthetic_customers(records: int = 12_000, seed: int = 42) -> pd.Da
     )
 
     linear_risk = (
-        -2.5
-        + np.maximum(-usage_change_30 - 12, 0) * 0.022
-        + outages * 0.22
-        + complaints * 0.31
-        + tickets_90 * 0.055
-        + payment_delay * 0.027
-        + failed_payments * 0.18
-        + np.maximum(3.2 - satisfaction, 0) * 0.52
-        - np.minimum(tenure, 60) * 0.006
-        + quality_factor * 0.25
+        -3.35
+        + np.maximum(-usage_change_30 - 10, 0) * 0.052
+        + outages * 0.48
+        + complaints * 0.62
+        + tickets_90 * 0.08
+        + payment_delay * 0.043
+        + failed_payments * 0.30
+        + np.maximum(3.3 - satisfaction, 0) * 0.88
+        - np.minimum(tenure, 60) * 0.008
+        + quality_factor * 0.42
     )
     latent_probability = _sigmoid(linear_risk)
     churn = rng.binomial(1, latent_probability).astype(int)

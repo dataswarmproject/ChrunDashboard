@@ -1,8 +1,0 @@
-pyproject.toml
-ltt_churn_intelligence_api.egg-info/PKG-INFO
-ltt_churn_intelligence_api.egg-info/SOURCES.txt
-ltt_churn_intelligence_api.egg-info/dependency_links.txt
-ltt_churn_intelligence_api.egg-info/requires.txt
-ltt_churn_intelligence_api.egg-info/top_level.txt
-tests/test_scoring.py
-tests/test_synthetic_data.py

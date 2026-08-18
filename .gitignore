@@ -9,6 +9,7 @@ __pycache__/
 .env.*
 !.env.example
 *.pem
+*.db
 backend/data/*.csv
 backend/data/*.parquet
 backend/artifacts/*.joblib

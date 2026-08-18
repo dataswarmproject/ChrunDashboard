@@ -66,6 +66,7 @@ class TrainingResult:
     model: Pipeline
     selected_model: str
     threshold: float
+    training_prevalence: float
     metrics: dict[str, dict[str, Any]]
     feature_importance: list[dict[str, Any]]
     explainability_method: str
@@ -128,8 +129,17 @@ def _candidate_models(positive_weight: float, seed: int, fast: bool) -> dict[str
     }
 
 
+def _restore_population_probability(
+    balanced_probability: np.ndarray, prevalence: float
+) -> np.ndarray:
+    """Undo the prior shift introduced by balanced class weighting."""
+    numerator = balanced_probability * prevalence
+    denominator = numerator + (1 - balanced_probability) * (1 - prevalence)
+    return np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 0)
+
+
 def _best_threshold(y_true: pd.Series, probabilities: np.ndarray) -> float:
-    candidates = np.linspace(0.25, 0.78, 54)
+    candidates = np.linspace(0.06, 0.55, 50)
     best_score = -1.0
     selected = 0.5
     minimum_precision = max(0.30, float(y_true.mean()) * 1.65)
@@ -266,9 +276,12 @@ def _retention_probability(customer: pd.Series) -> float:
     return round(float(np.clip(value, 0.28, 0.86)), 3)
 
 
-def _score_customers(customers: pd.DataFrame, model: Pipeline) -> pd.DataFrame:
+def _score_customers(
+    customers: pd.DataFrame, model: Pipeline, training_prevalence: float
+) -> pd.DataFrame:
     scored = customers.copy()
-    probability_30d = model.predict_proba(scored[MODEL_FEATURES])[:, 1]
+    raw_probability = model.predict_proba(scored[MODEL_FEATURES])[:, 1]
+    probability_30d = _restore_population_probability(raw_probability, training_prevalence)
     scored["churn_probability_30d"] = np.round(probability_30d, 5)
     scored["churn_probability_60d"] = np.round(1 - (1 - probability_30d) ** 1.55, 5)
     scored["churn_probability_90d"] = np.round(1 - (1 - probability_30d) ** 2.10, 5)
@@ -300,8 +313,16 @@ def _score_customers(customers: pd.DataFrame, model: Pipeline) -> pd.DataFrame:
     scored["recommended_action"] = actions
     scored["recommended_action_code"] = action_codes
     scored["action_owner"] = action_owners
-    scored["campaign_status"] = "NOT_STARTED"
-    scored["retention_result"] = "PENDING"
+    numeric_ids = scored["customer_id"].str[-6:].astype(int)
+    intervention_pool = scored["risk_category"].isin(["HIGH", "CRITICAL"])
+    completed = intervention_pool & (numeric_ids % 17 == 0)
+    in_progress = intervention_pool & ~completed & (numeric_ids % 11 == 0)
+    scored["campaign_status"] = np.select(
+        [completed, in_progress], ["COMPLETED", "IN_PROGRESS"], default="NOT_STARTED"
+    )
+    scored["retention_result"] = np.where(
+        completed, np.where(numeric_ids % 5 == 0, "CHURNED", "SAVED"), "PENDING"
+    )
     return scored
 
 
@@ -318,13 +339,15 @@ def train_and_score(customers: pd.DataFrame, seed: int = 42, fast: bool = False)
     )
     positives = max(int(train_y.sum()), 1)
     positive_weight = float((len(train_y) - positives) / positives)
+    training_prevalence = float(train_y.mean())
 
     fitted_models: dict[str, Pipeline] = {}
     metrics: dict[str, dict[str, Any]] = {}
     for name, estimator in _candidate_models(positive_weight, seed, fast).items():
         pipeline = Pipeline([("preprocess", _preprocessor()), ("model", estimator)])
         pipeline.fit(train_x, train_y)
-        probabilities = pipeline.predict_proba(test_x)[:, 1]
+        raw_probabilities = pipeline.predict_proba(test_x)[:, 1]
+        probabilities = _restore_population_probability(raw_probabilities, training_prevalence)
         threshold = _best_threshold(test_y, probabilities)
         fitted_models[name] = pipeline
         metrics[name] = _evaluate(test_y, probabilities, threshold)
@@ -332,13 +355,14 @@ def train_and_score(customers: pd.DataFrame, seed: int = 42, fast: bool = False)
     selected_model = select_best_model(metrics)
     best_model = fitted_models[selected_model]
     threshold = float(metrics[selected_model]["threshold"])
-    scored = _score_customers(customers, best_model)
+    scored = _score_customers(customers, best_model, training_prevalence)
     trained_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     feature_importance, explainability_method = _explain_model(best_model, test_x)
     return TrainingResult(
         model=best_model,
         selected_model=selected_model,
         threshold=threshold,
+        training_prevalence=training_prevalence,
         metrics=metrics,
         feature_importance=feature_importance,
         explainability_method=explainability_method,
@@ -358,6 +382,7 @@ def save_training_result(result: TrainingResult, output_dir: Path) -> None:
         "modelVersion": "churn-model-1.0.0",
         "selectedModel": result.selected_model,
         "threshold": result.threshold,
+        "trainingPrevalence": round(result.training_prevalence, 5),
         "trainedAt": result.trained_at,
         "datasetType": "SYNTHETIC",
         "recordCount": len(result.scored_customers),
